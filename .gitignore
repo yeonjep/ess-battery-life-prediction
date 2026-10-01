@@ -2,6 +2,13 @@ data/raw/
 data/processed/
 *.mat
 *.pkl
+*.zip
 .ipynb_checkpoints/
 __pycache__/
 .DS_Store
+.venv/
+venv/
+
+# AI 작업 가이드 (저장소 제외)
+.cursor/
+docs/
