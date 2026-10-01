@@ -12,3 +12,4 @@ venv/
 # AI 작업 가이드 (저장소 제외)
 .cursor/
 docs/
+reports/*.pdf
