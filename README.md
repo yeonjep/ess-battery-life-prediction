@@ -4,9 +4,21 @@
 
 ## 프로젝트 개요
 
-데이터는 Severson et al. (2019) LFP/흑연 셀이다. Batch 1로 학습하고, Batch 2를 테스트로, Batch 3를 추가 검증으로 쓴다. 사용 셀은 119개(36/39/44)다. 태스크는 회귀이고, 학습 타깃은 `log10(cycle_life)`, 지표는 원래 사이클 수 MAPE(%)다. 원논문 Target은 9.1%다. [D01] [D11]
+데이터는 Severson et al. (2019) LFP/흑연 셀이다. Batch 1로 학습하고, Batch 2를 테스트로, Batch 3를 추가 검증으로 쓴다. 사용 셀은 119개(36/39/44)다. 태스크는 회귀이고, 학습 타깃은 `log10(cycle_life)`, 지표는 원래 사이클 수 MAPE(%)다. 원논문 Target은 9.1%다.
 
 DAY 1 설계 원고: [reports/DS-MINI-Design-울산_4반-박연제.md](reports/DS-MINI-Design-울산_4반-박연제.md)
+
+### 용어
+
+| 용어 | 뜻 |
+| --- | --- |
+| Qdlin | 전압 축으로 맞춘 방전용량 곡선. 행 9가 사이클 10, 행 99가 사이클 100이다. |
+| ΔQ(V) | Qdlin 행 99 − 행 9. 사이클 100과 10의 방전용량 차이다. |
+| log10(var(ΔQ)) | ΔQ 1,000점 분산(ddof=1)의 로그. 코드 열 이름은 `log10_var`다. |
+| qd_max_minus_2 | 사이클 2~100 방전용량(QD) 최댓값 − 사이클 2 QD. 단발 스파이크만 앞뒤 중앙값으로 보정한다. |
+| newstructure | 정책 문자열 끝의 접미사다. DAY 1 Q3에서는 실험 방식 차이로 해석했다. Batch 1은 0셀, Batch 2는 9셀, Batch 3는 44셀이다. |
+| D번호 | [reports/DESIGN_TRACE.md](reports/DESIGN_TRACE.md)의 설계 항목 번호다. |
+| 학습 범위 | 설계서의 구간 기준은 Batch 1 전체 534~1,074이다. 모델이 실제로 본 범위는 아래 분할 절이다. |
 
 ## 파일 구조
 
@@ -16,7 +28,6 @@ DAY 1 설계 원고: [reports/DS-MINI-Design-울산_4반-박연제.md](reports/D
 ├── .gitignore
 ├── data/
 │   └── README.md                 # raw/, processed/ 는 로컬 전용
-├── docs/                         # gitignore. 작업 기록
 ├── notebooks/
 │   ├── 01_EDA.ipynb
 │   ├── 02_feature_engineering.ipynb
@@ -28,7 +39,7 @@ DAY 1 설계 원고: [reports/DS-MINI-Design-울산_4반-박연제.md](reports/D
 │   └── train.py
 ├── reports/
 │   ├── DS-MINI-Design-울산_4반-박연제.md
-│   ├── DESIGN_TRACE.md           # docs/DESIGN_TRACE.md 공개 복사본
+│   ├── DESIGN_TRACE.md           # 설계 항목 추적. docs/ 원본은 로컬 작업 문서라 저장소에 없다
 │   └── figures/
 └── results/
     ├── model_performance.csv
@@ -37,34 +48,39 @@ DAY 1 설계 원고: [reports/DS-MINI-Design-울산_4반-박연제.md](reports/D
     └── final_model.joblib
 ```
 
+`docs/`는 로컬 작업 문서이고 저장소에 포함되지 않는다.
+
 ## 환경 설정
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m ipykernel install --user --name python3
 ```
 
-원본 `.mat`는 `data/raw/`에 둔다. 파일 이름과 배치는 [data/README.md](data/README.md)에 있다.
+노트북 커널 이름은 `python3`다. 이미 그 이름의 커널이 있으면 마지막 명령은 생략해도 된다.
 
-```bash
-python src/preprocess.py --batches 1 2 3
-```
+1. `data/raw/`에 원본 배치 `.mat`를 둔다. 파일 이름은 [data/README.md](data/README.md)에 있다. 이 단계는 파일을 읽기만 하고, raw는 저장소에 올리지 않는다.
+2. `python src/preprocess.py --batches 1 2 3`는 `data/raw/`의 mat를 읽어 `data/processed/batch{N}.pkl`을 만든다.
+3. `notebooks/01_EDA.ipynb`는 pkl로 EDA를 한다. 피처 csv는 만들지 않는다.
+4. `notebooks/02_feature_engineering.ipynb`는 pkl로 `data/processed/features_batch{N}.csv`를 만든다.
+5. `notebooks/03_modeling.ipynb`는 피처 csv로 학습하고 Batch 2·3를 평가해 `results/`를 만든다.
 
-그다음 `notebooks/02_feature_engineering.ipynb`가 `features_batch{N}.csv`를 만든다. 이어서 `01_EDA.ipynb`, `02_feature_engineering.ipynb`, `03_modeling.ipynb` 순서로 연다. `data/raw/`, `data/processed/`, `.mat`, `.pkl`은 저장소에 올리지 않는다.
+`data/raw/`, `data/processed/`, `.mat`, `.pkl`은 저장소에 올리지 않는다.
 
 ## EDA
 
-질문별 핵심 발견이다. 그림은 `reports/figures/`에 있다.
+질문별 핵심 발견이다. 설계서와 README의 수치는 소수 셋째까지 계산해 설계서에 적힌 자릿수로 반올림해 대조했다.
 
-| 질문 | 핵심 발견 |
-| --- | --- |
-| Q1 수명 분포 | Batch 1은 534~1,074(중앙 772). Batch 2의 30/39가 534 미만이고, 1,074 초과는 Batch 2가 2셀, Batch 3가 16셀이다. [Q1] |
-| Q2 열화 곡선 | 사이클 100 방전용량은 단수명 1.100Ah, 장수명 1.069Ah다. 초기 100사이클 기울기는 1e-5 Ah/사이클 수준이라 평탄하고, 가속은 그 뒤다. [Q2] |
-| Q3 ΔQ(V) | log10(var(ΔQ))와 log10(수명)은 전체 Pearson −0.90, Spearman −0.89. Batch 1은 −0.84 / −0.83, R² 0.71. 수명 700~1,100의 3.0V ΔQ는 Batch 1 −0.031Ah, Batch 3 −0.024Ah. [Q3] |
-| Q4 충전 조건 | Batch 1 평균 C-rate와 log 수명의 r은 −0.53이고, Batch 2는 −0.04, Batch 3는 −0.05다. 같은 4.8C(80%)-4.8C 중앙 수명은 753 / 492 / 809 / 1,640이다. [Q4] |
-| Q5 상관 | Batch 1 1위는 log10(var) −0.84. log10(min 절댓값)과 r=0.996이라 탈락. 잔차에서 세 배치 부호가 같은 추가 신호는 qd_max_minus_2뿐(−0.53/−0.63/−0.43). [Q5] |
-| 배치 비교 | newstructure는 Batch 1이 0, Batch 2가 9, Batch 3가 44 전부다. 같은 수명에서도 Batch 1의 ΔQ 골이 더 깊다. 정규화 깊이 비는 1.30에서 1.29로만 줄었다. |
+| 질문 | 핵심 발견 | 그림 |
+| --- | --- | --- |
+| Q1 수명 분포 | Batch 1은 534~1,074(중앙 772). Batch 2의 30/39가 534 미만이고, 1,074 초과는 Batch 2가 2셀, Batch 3가 16셀이다. | [q1_cycle_life_hist.png](reports/figures/q1_cycle_life_hist.png) |
+| Q2 열화 곡선 | 사이클 100 방전용량은 단수명 1.100Ah, 장수명 1.069Ah다. 초기 100사이클 기울기는 1e-5 Ah/사이클 수준이라 평탄하고, 가속은 그 뒤다. | [q2_long_short.png](reports/figures/q2_long_short.png) |
+| Q3 ΔQ(V) | log10(var(ΔQ))와 log10(수명)은 전체 Pearson −0.90, Spearman −0.89. Batch 1은 −0.84 / −0.83, R² 0.71. 수명 700~1,100의 3.0V ΔQ는 Batch 1 −0.031Ah, Batch 3 −0.024Ah. | [q3_logvar_scatter.png](reports/figures/q3_logvar_scatter.png) |
+| Q4 충전 조건 | Batch 1 평균 C-rate와 log 수명의 r은 −0.53이고, Batch 2는 −0.04, Batch 3는 −0.05다. 같은 4.8C(80%)-4.8C 중앙 수명은 753 / 492 / 809 / 1,640이다(설계서에 집단 구분이 없어 해석 보류). | [q4_crate_scatter.png](reports/figures/q4_crate_scatter.png) |
+| Q5 상관 | Batch 1 1위는 log10(var) −0.84. log10(min 절댓값)과 r=0.996이라 탈락. 잔차에서 세 배치 부호가 같은 추가 신호는 qd_max_minus_2뿐(−0.53/−0.63/−0.43). | [q5_residual.png](reports/figures/q5_residual.png) |
+| 배치 비교 | newstructure는 Batch 1이 0, Batch 2가 9, Batch 3가 44 전부다. 같은 수명에서도 Batch 1의 ΔQ 골이 더 깊다. 정규화 깊이 비는 1.30에서 1.29로만 줄었다. | [q3_batch_distortion.png](reports/figures/q3_batch_distortion.png) |
 
 ## Modeling
 
@@ -72,25 +88,27 @@ python src/preprocess.py --batches 1 2 3
 
 | 피처 | 계산식 | 근거 |
 | --- | --- | --- |
-| log10(var(ΔQ)) | Qdlin 행 99 − 행 9, 1,000점 분산(ddof=1)에 log10 | [Q3] [Q5] [D09] |
-| qd_max_minus_2 | 사이클 2~100 QD 최댓값 − 사이클 2 QD. 단발 스파이크만 앞뒤 중앙값으로 보정 | [Q5] [D10] |
+| log10(var(ΔQ)) | Qdlin 행 99 − 행 9, 1,000점 분산(ddof=1)에 log10 | Q3, Q5. 설계서 4장 |
+| qd_max_minus_2 | 사이클 2~100 QD 최댓값 − 사이클 2 QD. 단발 스파이크만 앞뒤 중앙값으로 보정 | Q5. 설계서 4장 |
 
-배제한 것은 log10(min 절댓값), 2V 값, skew, 정책·chargetime, 배치 번호, 정규화 ΔQ, knee다. 정규화 ΔQ는 오프셋을 줄이지 못했다. [D12] [D17] [D19]
+배제한 것은 log10(min 절댓값), 2V 값, skew, 정책·chargetime, 배치 번호, 정규화 ΔQ, knee다. 정규화 ΔQ는 오프셋을 줄이지 못했다.
+
+학습에 넣는 모델은 `Pipeline(StandardScaler → 모델)`이다. 스케일러는 GroupKFold 각 학습 폴드와 최종 적합의 train 29셀에서만 fit하고, Batch 2·3에는 transform만 한다. 설계서 4장·7장, `src/train.py`의 `make_pipeline`.
 
 ### 데이터 분할
 
-같은 충전 프로토콜이 train과 hold-out에 동시에 들어가면 프로토콜이 새는 것처럼 보인다. Batch 1을 `policy_readable` 그룹 `GroupShuffleSplit`(test_size 0.2, `RANDOM_STATE=42`)으로 나눴다. [D22]
+같은 충전 프로토콜이 train과 hold-out에 동시에 들어가면 프로토콜이 새는 것처럼 보인다. 설계서의 `charging_policy`는 데이터의 `policy_readable` 열이며, Batch 1에서는 두 문자열이 같다. 가이드의 "셀 단위 Hold-out"은 1행=1셀을 유지하고, 같은 프로토콜이 양쪽에 들어가지 않도록 정책 그룹 20%로 나눈 것이라 셀 비율이 19.444%다. Batch 1을 `policy_readable` 그룹 `GroupShuffleSplit`(test_size 0.2, `RANDOM_STATE=42`)으로 나눴다.
 
 | 구분 | 셀 | 정책 | 수명 |
 | --- | --- | --- | --- |
 | train | 29 | 16 | 534~1,054 |
 | hold-out | 7 | 4 | 617~1,074 |
 
-정책 겹침은 0이다. 셀 비율 19.444%는 정책 20종의 20%를 나눈 결과다. 튜닝과 Train MAPE는 train 29셀 안 `GroupKFold(5)`만 쓴다. [D23]
+정책 겹침은 0이다. 설계서의 구간 기준은 Batch 1 전체 534~1,074이고, 모델이 실제로 본 범위는 train 29셀 534~1,054다. 1,074인 b1c5는 hold-out에 있다. 오차 구간은 설계 기준(534 미만 / 534~1,074 / 1,074 초과)을 쓰고, 트리 천장이 학습 밖인지는 1,054와 비교한다. 튜닝과 Train MAPE는 train 29셀 안 `GroupKFold(5)`만 쓴다.
 
 ### 후보와 최종 모델
 
-선택 규칙은 결과를 보기 전에 고정했다. 최종 모델은 ElasticNet, Ridge, Lasso 중에서만 고른다. GroupKFold 평균 MAPE가 가장 낮은 쪽을 택하고, 다른 메인이 0.5%p 안이면 Valid가 낮은 쪽을 택한다. Valid만으로 잠그지 않는다. 비교군은 선택에 넣지 않는다. [D23] [D31]
+선택 규칙은 결과를 보기 전에 고정했다. 최종 모델은 ElasticNet, Ridge, Lasso 중에서만 고른다. GroupKFold 평균 MAPE가 가장 낮은 쪽을 택하고, 다른 메인이 0.5%p 안이면 Valid가 낮은 쪽을 택한다. Valid만으로 잠그지 않는다. 비교군은 선택에 넣지 않는다.
 
 | 모델 | 역할 | Train MAPE | Valid MAPE |
 | --- | --- | --- | --- |
@@ -101,25 +119,25 @@ python src/preprocess.py --batches 1 2 3
 | XGBoost (depth 2, 50 trees, lr 0.05) | 비교군 | 9.261±2.072 | 10.068 |
 | LinearRegression(log10_var) | 비교군 | 8.874±1.538 | 8.465 |
 
-세 메인의 차이는 CV 0.000010%p, Valid 0.000007%p다. Ridge는 계수를 0으로 만들지 않아 설계 피처 두 개가 남는다. 스케일 후 계수는 log10_var −0.089, qd_max_minus_2 −0.041, 절편 2.884이고, 5개 폴드 모두 음수다. [D32] [D41]
+세 메인의 차이는 CV 0.000010%p, Valid 0.000007%p다. Ridge는 계수를 0으로 만들지 않아 설계 피처 두 개가 남는다. 스케일 후 계수는 log10_var −0.089, qd_max_minus_2 −0.041, 절편 2.884이고, 5개 폴드 모두 음수다.
 
 ### 정규화 강도
 
-alpha를 격자 하한까지 내려도 작은 alpha 구간의 Train MAPE는 평탄하다. Ridge는 1e-06~1e-03에서 변화 0.000171%p다. 피처를 2개로 잠그고 공선 피처를 뺀 뒤라, L1·L2가 추가로 줄일 분산이 작았다. 설계가 정규화 모델을 메인으로 둔 이유 가운데 외삽과 계수 해석은 그대로다. [D26] [D35] 그림은 `reports/figures/modeling_alpha_curve.png`다.
+alpha를 격자 하한까지 내려도 작은 alpha 구간의 Train MAPE는 평탄하다. Ridge는 1e-06~1e-03에서 변화 0.000171%p다. 최적 alpha가 0에 가까워, 결과적으로 규제 없는 선형회귀와 거의 같은 해가 되었다. 과적합 억제는 피처를 2개로 제한한 설계가 맡았다. 피처를 2개로 잠그고 공선 피처를 뺀 뒤라, L1·L2가 추가로 줄일 분산이 작았다. 설계가 정규화 모델을 메인으로 둔 이유 가운데 외삽과 계수 해석은 그대로다. 그림은 [modeling_alpha_curve.png](reports/figures/modeling_alpha_curve.png)다.
 
 ### 딥러닝을 쓰지 않은 이유
 
-학습에 쓰는 셀은 29개다. 파라미터 수가 셀 수를 넘기 쉽고, 수명 범위 밖은 선형 모델이 외삽한다. 비교군 트리는 학습한 수명 밖으로 나가지 못한다. [D27] [D28]
+학습에 쓰는 셀은 29개다. 파라미터 수가 셀 수를 넘기 쉽고, 수명 범위 밖은 선형 모델이 외삽한다. 비교군 트리는 학습한 수명 밖으로 나가지 못한다.
 
 ### 설계 대비 구현
 
-추적 표는 [reports/DESIGN_TRACE.md](reports/DESIGN_TRACE.md)다. `docs/`는 저장소에서 빠지므로 같은 파일을 여기에 복사했다.
+추적 표는 [reports/DESIGN_TRACE.md](reports/DESIGN_TRACE.md)다. `docs/`는 로컬 작업 문서라 저장소에 없고, 같은 추적 표를 `reports/`에 두었다.
 
 | 단계 | 설계 수치와 일치한 항목 | 대표 수치 |
 | --- | --- | --- |
-| P8 | 18 | 스파이크 보정 22점. Batch 1 R² 재현 0.712(설계 0.71). 두 피처 VIF 1.726(설계 1.73) |
-| P11 | 2 | 수명 700~1,100의 3.0V 중앙 ΔQ. Batch 1 −0.0312→−0.031, Batch 2 −0.0209→−0.021 |
-| P12 | 4 | 사용 셀 44, 1,074 초과 16, 3.0V −0.0241→−0.024, Batch 1 train newstructure 0 |
+| 피처 재현 | 18 | 스파이크 보정 22점. Batch 1 R² 재현 0.712(설계 0.71). 두 피처 VIF 1.726(설계 1.73) |
+| Batch 2 오류 분석 | 2 | 수명 700~1,100의 3.0V 중앙 ΔQ. Batch 1 −0.0312→−0.031, Batch 2 −0.0209→−0.021 |
+| Batch 3 평가 | 4 | 사용 셀 44, 1,074 초과 16, 3.0V −0.0241→−0.024, Batch 1 train newstructure 0 |
 
 구체화 기록은 설계에 없던 세부값이다. 오류 구간은 세 칸, GroupKFold는 5, 비교군은 DecisionTree와 XGBoost, ΔQ 분산은 ddof=1, alpha 격자 하한은 평탄 구간을 보려고 넓혔다. Q4의 중앙 수명 네 값은 집단이 적혀 있지 않아 보류했다. 설계 변경은 하나다. 원고 첫 문단의 124셀은 오기고, DAY 2 산출물은 사용 119셀(36/39/44)이다.
 
@@ -148,9 +166,19 @@ Gap(A-B) = B − A 이고, 양수면 나빠진 것이다. Gap(Target-Test) = Tes
 | Gap (Batch2-Batch3) | 4.686 | 테스트 배치 간 비교 |
 | Gap (Target-Test, Batch 3) | 15.845 | Target : 원논문 9.1% |
 
-Gap(Train-Valid)가 음수인 것은 hold-out 7셀이 train보다 쉬운 쪽에 가깝다는 뜻이고, 7셀이라 과적합이 없다고 단정하지 않는다. Gap(Valid-Test) 15.371은 534 이상에서 수명을 길게 본 결과다. 같은 수명인데 Batch 2·3의 ΔQ 골이 Batch 1보다 얕아, Batch 1에서 배운 기울기가 작은 분산을 긴 수명으로 읽는다. Gap(Target-Test) 11.159는 원논문 9.1%와 학습·테스트 구성이 달라 직접 비교하지 않는다. Gap(Batch2-Batch3) 4.686은 Batch 3가 더 나쁜 폭이다. Batch 2 평균은 534 미만 30셀이 끌어내렸고, Batch 3에는 그 짧은 셀이 없다. [D30] [D33] [D39]
+Gap(Train-Valid)가 음수인 것은 hold-out 7셀이 train보다 쉬운 쪽에 가깝다는 뜻이고, 7셀이라 과적합이 없다고 단정하지 않는다. Gap(Valid-Test) 15.371은 534 이상에서 수명을 길게 본 결과다. 같은 수명인데 Batch 2·3의 ΔQ 골이 Batch 1보다 얕아, Batch 1에서 배운 기울기가 작은 분산을 긴 수명으로 읽는다. Gap(Target-Test) 11.159는 원논문 9.1%와 학습·테스트 구성이 달라 직접 비교하지 않는다. Gap(Batch2-Batch3) 4.686은 Batch 3가 더 나쁜 폭이다. Batch 2 평균은 534 미만 30셀이 끌어내렸고, Batch 3에는 그 짧은 셀이 없다.
 
-아래 표는 저장된 예측의 집계다. 모델 선택에는 쓰지 않았다. Batch 3에서는 비교군의 전체 MAPE가 Ridge보다 낮다. 선택 규칙은 Batch 2를 보기 전에 잠겼다.
+수명 구간별 MAPE, 비교군, 피처 기여, 트레이드오프는 [오류 분석](#오류-분석)에 있다.
+
+## 오류 분석
+
+Batch 2 Test 20.259는 534 이상 9셀의 과대예측(평균 부호 +31.999%, +36.277%)에서 커졌고, 534 미만 30셀은 +1.124%로 상쇄됐다. 그 상쇄는 qd_max_minus_2 기여(평균 −0.078)다. log10_var만 쓰면 그 구간 평균 부호가 +33.865%다. 3.0V 중앙 ΔQ는 Batch 1 −0.031, Batch 2 −0.021Ah다. Batch 2를 셀별 3.0V ΔQ로 3등분한 구간 중 가장 얕은 13셀의 Ridge MAPE는 28.531이다.
+
+Batch 3 Test는 24.945다. 44셀 중 1,074 초과가 16개이고 534 미만은 0이라, 짧은 쪽 상쇄가 없다. 평균 부호는 +22.500%다. 최장 b3c38(1,935)은 Ridge 1,495.521, 오차 −22.712%다.
+
+오차가 큰 셀은 newstructure이고, 그 정책은 Batch 1 train 16종에 없다. Batch 2 상위는 b2c44, b2c9, b2c34로 3.0V ΔQ가 −0.019~−0.013Ah다. Batch 3 상위 5셀도 전부 newstructure이고, 3.0V ΔQ는 Batch 1 중앙 −0.031보다 얕다. 테스트에 남긴 연속 실험 후보 셀 가운데 Batch 2 오차 상위 5에 들어간 것은 b2c9뿐이다.
+
+아래 표는 저장된 예측의 집계다. 모델 선택에는 쓰지 않았다.
 
 | 모델 | Batch 2 | <534 (30) | 534~1,074 (7) | >1,074 (2) | Batch 3 | 534~1,074 (28) | >1,074 (16) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -159,11 +187,13 @@ Gap(Train-Valid)가 음수인 것은 hold-out 7셀이 train보다 쉬운 쪽에 
 | XGBoost | 39.921 | 48.483 | 9.349 | 18.493 | 16.857 | 9.849 | 29.122 |
 | log10_var 단일 | 29.596 | 33.865 | 18.023 | 6.060 | 12.217 | 8.981 | 17.881 |
 
-비교군이 Batch 3에서 더 낮은 이유. 모델 선택은 결과를 보기 전에 정한 규칙과 지정 테스트(Batch 2) 기준이다. Batch 2에서 Ridge 20.259, DecisionTree 39.953, XGBoost 39.921, log10_var 단일 29.596이라, 짧은 쪽 외삽이 필요한 배치에서 설계대로 선형 모델이 낮았다.  
-Batch 3는 534 미만 셀이 0개라 아래쪽 외삽이 필요 없다. 트리·부스팅은 예측 최대 872.099 / 947.558에서 멈춰 긴 셀을 짧게 보는데, 이 방향이 ΔQ 오프셋에 의한 과대예측과 반대라 오차가 작게 나왔다.  
-qd_max_minus_2의 효과는 배치마다 반대다. Batch 2는 단일 29.596에서 Ridge 20.259로 줄고, Batch 3는 단일 12.217에서 Ridge 24.945로 늘었다.  
-두 테스트 배치를 모두 이기는 모델이 없다는 것은 오차의 본질이 모델 종류보다 피처의 배치 간 오프셋에 있다는 근거이고, 개선 방향 1(여러 배치 혼합 학습)로 이어진다.  
-테스트 결과를 보고 모델·피처를 바꾸지 않았다. 테스트는 마지막 한 번이다.
+Batch 3 전체 MAPE 최저는 log10_var 단일 12.217이다. 다음은 XGBoost 16.857, DecisionTree 18.471, Ridge 24.945다.  
+단일 모델의 평균 부호 오차는 전체 −1.027%다. 534~1,074 28셀은 +5.191%로 조금 길고, 1,074 초과 16셀은 −11.909%로 짧다. 긴 쪽 과소가 ΔQ 오프셋의 과대예측과 상쇄되어 전체 MAPE가 가장 낮다. Ridge는 전체 +22.500%, 534~1,074은 +25.178%, 1,074 초과는 +17.812%다. qd_max_minus_2가 긴 쪽 단일 −11.909%를 Ridge +17.812%로 키운다.  
+트리 천장은 트리·부스팅에만 해당한다. DecisionTree의 1,074 초과 평균 부호는 −34.099%이고 예측은 872.099에서 멈춘다. XGBoost의 그 구간은 −29.122%이고 예측 최대는 947.558이다.  
+모델 선택은 결과를 보기 전에 정한 규칙과 지정 테스트 Batch 2 기준이다. Batch 2 전체 MAPE는 Ridge 20.259가 가장 낮고, DecisionTree 39.953, XGBoost 39.921, log10_var 단일 29.596이다.  
+두 테스트 배치를 모두 이기는 모델은 없다. 오차는 모델 종류보다 피처의 배치 간 오프셋에 있고, 개선 방향 1(여러 배치 혼합 학습)로 이어진다. 테스트 결과를 보고 모델·피처를 바꾸지 않았다.
+
+qd_max_minus_2는 짧은 쪽 과대예측을 +33.865%에서 +1.124%로 내린다. 같은 피처가 Batch 3의 1,074 초과에서는 위를 본 것처럼 과대를 키운다. 테스트에서 이 교환이 보여도 피처를 바꾸지 않았다. 피처와 모델은 Batch 2를 보기 전에 잠겼기 때문이다.
 
 | 배치 | 외삽 방향 | 셀 수 | Ridge MAPE | 트리 MAPE | 평균 부호 % |
 | --- | --- | --- | --- | --- | --- |
@@ -172,27 +202,17 @@ qd_max_minus_2의 효과는 배치마다 반대다. Batch 2는 단일 29.596에�
 
 ![실제 수명과 예측](reports/figures/err_actual_vs_pred.png)
 
-Ridge는 534 미만에서 y=x 주변에 있고, 534 이상은 직선 위로 올라간다. DecisionTree는 짧은 셀을 666.987 높이에 가로로 모은다. [D27]
-
-## 오류 분석
-
-Batch 2 Test 20.259는 534 이상 9셀의 과대예측(평균 부호 +31.999%, +36.277%)에서 커졌고, 534 미만 30셀은 +1.124%로 상쇄됐다. 그 상쇄는 qd_max_minus_2 기여(평균 −0.078)다. log10_var만 쓰면 그 구간 평균 부호가 +33.865%다. 3.0V 중앙 ΔQ는 Batch 1 −0.031, Batch 2 −0.021Ah다. ΔQ가 얕은 13셀의 Ridge MAPE는 28.531이다.
-
-Batch 3 Test는 24.945다. 44셀 중 1,074 초과가 16개이고 534 미만은 0이라, 짧은 쪽 상쇄가 없다. 평균 부호는 +22.500%다. 트리는 872.099에서 멈춘다. 최장 b3c38(1,935)은 Ridge 1,495.521, 오차 −22.712%다.
-
-오차가 큰 셀은 newstructure이고, 그 정책은 Batch 1 train 16종에 없다. Batch 2 상위는 b2c44, b2c9, b2c34로 3.0V ΔQ가 −0.019~−0.013Ah다. Batch 3 상위 5셀도 전부 newstructure이고, 3.0V ΔQ는 Batch 1 중앙 −0.031보다 얕다. D05로 테스트에 남긴 셀 가운데 Batch 2 오차 상위 5에 들어간 것은 b2c9뿐이다.
-
-qd_max_minus_2는 짧은 쪽 과대예측을 +33.865%에서 +1.124%로 내리고, Batch 3의 1,074 초과에서는 단일 모델 −11.909%를 Ridge +17.812%로 키운다. 같은 교환이 전체 MAPE에도 있어, Batch 2는 단일 29.596에서 Ridge 20.259로 줄고 Batch 3는 12.217에서 24.945로 늘어 두 배치를 모두 이기는 모델은 없다. 테스트에서 이 교환이 보여도 피처를 바꾸지 않았다. 피처와 모델은 Batch 2를 보기 전에 잠겼기 때문이다.
+Ridge는 534 미만에서 y=x 주변에 있고, 534 이상은 직선 위로 올라간다. DecisionTree는 짧은 셀을 666.987 높이에 가로로 모은다.
 
 ![분산과 수명](reports/figures/err_offset.png)
 
-수명 534~1,074에서 log10_var 중앙은 train 29셀 −3.777, Batch 2 7셀 −4.231이다. 같은 수명에서 Batch 2가 왼쪽(더 작은 분산)에 있다. [D30]
+수명 534~1,074에서 log10_var 중앙은 train 29셀 −3.777, Batch 2 7셀 −4.231이다. 같은 수명에서 Batch 2가 왼쪽(더 작은 분산)에 있다.
 
 개선은 구현하지 않았다.
 
-1. 학습 배치가 하나라 ΔQ 오프셋을 배울 수 없다. 여러 배치를 섞는 원논문 방식이 이 차이를 다룬다. [D30] [D33]
-2. 정규화 ΔQ는 깊이 비를 1.30에서 1.29로만 바꿨다. 배치에 덜 민감한 피처를 더 볼 여지가 있다. [D17]
-3. 새 배치의 초기 소수 셀로 절편만 다시 맞출 수 있다. 배치 번호를 피처로 넣는 것과는 다르다. [D30]
+1. 학습 배치가 하나라 ΔQ 오프셋을 배울 수 없다. 여러 배치를 섞는 원논문 방식이 이 차이를 다룬다.
+2. 정규화 ΔQ는 깊이 비를 1.30에서 1.29로만 바꿨다. 배치에 덜 민감한 피처를 더 볼 여지가 있다.
+3. 새 배치의 초기 소수 셀로 절편만 다시 맞출 수 있다. 배치 번호를 피처로 넣는 것과는 다르다.
 
 ## ESS 도메인 해석
 
@@ -200,7 +220,7 @@ qd_max_minus_2는 짧은 쪽 과대예측을 +33.865%에서 +1.124%로 내리고
 
 긴 수명을 길게 보는 오차는 위험하다. 아직 괜찮다고 판단하면 교체가 늦어진다. 운영에서는 예측 수명에 보수적 여유를 두고, 새 배치의 초기 셀로 절편만 다시 맞춘다.
 
-한계는 학습 배치가 하나이고 학습 셀이 29개라는 점, 실험실 LFP 한 화학이라는 점, newstructure라는 실험 구조가 Batch 1 train에 0개라는 점, 원논문과 학습·테스트 구성이 다르다는 점이다.
+한계는 학습 배치가 하나이고 학습 셀이 29개라는 점, 실험실 LFP 한 화학이라는 점, newstructure가 Batch 1 train에 0개라는 점, 원논문과 학습·테스트 구성이 다르다는 점이다.
 
 실배포에서는 운영 데이터로 다시 학습한다. Data Drift는 성능이 떨어지기 전에, 새 배치의 log10_var 분포가 train 범위(−4.146~−3.350)에서 벗어나는지로 본다. Batch 3는 그 아래 셀이 24개였다. Model Drift는 잠긴 Ridge의 Valid 4.888 대비 이후 배치 MAPE가 벌어지는지로 본다. 새 배치의 분산이 train 범위를 벗어나거나 Gap(Valid-Test)가 다시 커지면 재학습한다. 배치 번호 자체는 피처로 넣지 않는다.
 

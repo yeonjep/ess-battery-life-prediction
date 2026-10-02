@@ -9,3 +9,4 @@ lightgbm==4.7.0
 mat73==0.65
 h5py==3.16.0
 jupyter==1.1.1
+ipykernel==7.4.0

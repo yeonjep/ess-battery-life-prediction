@@ -23,6 +23,17 @@ BATCH_MAT_FILES = {
 
 
 def set_korean_font() -> None:
-    """그래프 한글을 AppleGothic으로 표시하고, 마이너스 기호가 깨지지 않게 한다."""
-    plt.rcParams["font.family"] = "AppleGothic"
+    """한글 폰트를 AppleGothic, Malgun Gothic, NanumGothic 순으로 고른다.
+
+    macOS에는 AppleGothic이 있어 기존 그림과 같은 폰트를 쓴다.
+    """
+    from matplotlib import font_manager
+
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    for name in ("AppleGothic", "Malgun Gothic", "NanumGothic"):
+        if name in available:
+            plt.rcParams["font.family"] = name
+            break
+    else:
+        plt.rcParams["font.family"] = "AppleGothic"
     plt.rcParams["axes.unicode_minus"] = False
