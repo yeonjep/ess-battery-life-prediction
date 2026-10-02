@@ -1,5 +1,7 @@
 # ESS 배터리 수명 예측
 
+## 목적
+
 초기 100사이클만으로 셀 수명을 예측해, 용량이 80%로 떨어지기 전에 교체 계획을 잡는다. ESS 교체 비용은 설비 투자(CAPEX)의 30~40%라, 짧은 셀을 일찍 가리는 일이 비용의 중심이다.
 
 ## 프로젝트 개요
@@ -20,6 +22,8 @@ DAY 1 설계 원고: [reports/DS-MINI-Design-울산_4반-박연제.md](reports/D
 | D번호 | [reports/DESIGN_TRACE.md](reports/DESIGN_TRACE.md)의 설계 항목 번호다. |
 | 학습 범위 | 설계서의 구간 기준은 Batch 1 전체 534~1,074이다. 모델이 실제로 본 범위는 아래 분할 절이다. |
 | 노트북의 P8~P12 | 작업 단계 표기다. P8 피처 재현, P9 학습, P10 Batch 2 평가, P11 Batch 2 오류 분석, P12 Batch 3 평가. |
+| CAPEX | 설비투자비. ESS에서 배터리 교체 비용이 이 비용의 30~40%다. |
+| Data Drift / Model Drift | 입력 분포 변화 / 예측 성능 저하. 이 프로젝트의 Data Drift 점검은 새 배치의 log10_var 분포를 train과 비교하는 것이다. |
 
 ## 파일 구조
 
@@ -66,7 +70,7 @@ python -m ipykernel install --user --name python3
 2. `python src/preprocess.py --batches 1 2 3`는 `data/raw/`의 mat를 읽어 `data/processed/batch{N}.pkl`을 만든다.
 3. `notebooks/01_EDA.ipynb`는 pkl로 EDA를 한다. 피처 csv는 만들지 않는다.
 4. `notebooks/02_feature_engineering.ipynb`는 pkl로 `data/processed/features_batch{N}.csv`를 만든다.
-5. `notebooks/03_modeling.ipynb`는 피처 csv로 학습·평가하고, ΔQ 깊이 계산을 위해 `data/processed/batch2.pkl`과 `batch3.pkl`도 읽어 `results/`를 만든다.
+5. `notebooks/03_modeling.ipynb`는 피처 csv로 학습·평가하고, ΔQ 깊이 계산을 위해 `data/processed/batch2.pkl`과 `batch3.pkl`도 읽어 `results/`를 만든다. 03을 다시 실행하면 `results/`를 다시 쓰지만, 모델·분할·`RANDOM_STATE`가 고정되어 같은 값이 나온다. 제출된 `results/`는 모델을 잠근 뒤 테스트를 한 번 평가한 기록이다.
 
 `lightgbm`과 `mat73`은 DAY 1 환경 고정 목록에 있으나, 이번 학습·평가 코드는 import하지 않는다. 목록에서는 빼지 않는다.
 
@@ -169,7 +173,7 @@ Gap(A-B) = B − A 이고, 양수면 나빠진 것이다. Gap(Target-Test) = Tes
 | Gap (Batch2-Batch3) | 4.686 | 테스트 배치 간 비교 |
 | Gap (Target-Test, Batch 3) | 15.845 | Target : 원논문 9.1% |
 
-Gap(Train-Valid)가 음수인 것은 hold-out 7셀이 train보다 쉬운 쪽에 가깝다는 뜻이고, 7셀이라 과적합이 없다고 단정하지 않는다. Gap(Valid-Test) 15.371은 534 이상에서 수명을 길게 본 결과다. 같은 수명인데 Batch 2·3의 ΔQ 골이 Batch 1보다 얕아, Batch 1에서 배운 기울기가 작은 분산을 긴 수명으로 읽는다. Gap(Target-Test) 11.159는 원논문 9.1%와 학습·테스트 구성이 달라 직접 비교하지 않는다. Gap(Batch2-Batch3) 4.686은 Batch 3가 더 나쁜 폭이다. Batch 2 평균은 534 미만 30셀이 끌어내렸고, Batch 3에는 그 짧은 셀이 없다.
+Gap(Train-Valid)가 음수인 것은 hold-out 7셀이 train보다 쉬운 쪽에 가깝다는 뜻이고, 7셀이라 과적합이 없다고 단정하지 않는다. Gap(Valid-Test) 15.371은 534 이상에서 수명을 길게 본 결과다. 같은 수명인데 Batch 2·3의 ΔQ 골이 Batch 1보다 얕아, Batch 1에서 배운 기울기가 작은 분산을 긴 수명으로 읽는다. Gap(Target-Test) 11.159는 원논문 9.1%와 학습·테스트 구성이 달라 직접 비교하지 않는다. Gap(Batch2-Batch3) 4.686은 Batch 3가 더 나쁜 폭이다. Batch 2 평균은 534 미만 30셀이 끌어내렸고, Batch 3에는 그 짧은 셀이 없다. 피처 두 개는 Batch 1의 ΔQ 분포(골 깊이)에 맞춰져 있어, 같은 수명에서 골이 얕은 Batch 2·3를 길게 본다. 3.0V 중앙 ΔQ는 Batch 1 −0.031, Batch 2 −0.021, Batch 3 −0.024 Ah다.
 
 수명 구간별 MAPE, 비교군, 피처 기여, 트레이드오프는 [오류 분석](#오류-분석)에 있다.
 
@@ -179,7 +183,7 @@ Batch 2 Test 20.259는 534 이상 9셀의 과대예측(평균 부호 +31.999%, +
 
 Batch 3 Test는 24.945다. 44셀 중 1,074 초과가 16개이고 534 미만은 0이라, 짧은 쪽 상쇄가 없다. 평균 부호는 +22.500%다. 최장 b3c38(1,935)은 Ridge 1,495.521, 오차 −22.712%다.
 
-오차가 큰 셀은 대부분 newstructure이고, 그 정책은 Batch 1 train 16종에 없다. 예외로 Batch 2 상위 5의 b2c17은 정책이 5.6C(26%)-4.5C라 newstructure가 아니다. Batch 2 상위는 b2c44, b2c9, b2c34로 3.0V ΔQ가 −0.019~−0.013Ah다. Batch 3 상위 5셀은 전부 newstructure이고, 3.0V ΔQ는 Batch 1 중앙 −0.031보다 얕다. DAY 1에서 연속 실험 여부를 검토해 테스트에 남긴 셀(설계서 2장) 가운데 Batch 2 오차 상위 5에 들어간 것은 b2c9뿐이다.
+오차가 큰 셀은 대부분 newstructure이고, 그 정책은 Batch 1 train 16종에 없다. 예외로 Batch 2 상위 5의 b2c17은 정책이 5.6C(26%)-4.5C라 newstructure가 아니다. Batch 2 상위는 b2c44, b2c9, b2c34로 3.0V ΔQ가 −0.019~−0.013Ah다. Batch 3 상위 5셀은 전부 newstructure이고, 3.0V ΔQ는 Batch 1 중앙 −0.031보다 얕다. DAY 1에서 연속 실험 여부를 검토해 테스트에 남긴 셀은 b2c7, b2c8, b2c9, b2c15, b2c16이고, 이 중 Batch 2 오차 상위 5에 든 것은 b2c9뿐이다.
 
 아래 표는 저장된 예측의 집계다. 모델 선택에는 쓰지 않았다.
 
