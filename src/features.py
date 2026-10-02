@@ -10,11 +10,14 @@ Qdlin 인덱스: 저장 배열의 행 k = 사이클 번호 k+1.
 
 from __future__ import annotations
 
+import pickle
 import re
 
 import numpy as np
 import pandas as pd
 from scipy.stats import kurtosis, skew
+
+from src.config import DATA_PROCESSED_DIR
 
 # 5.4C(50%)-3.6C 또는 끝에 -newstructure. C-rate·SOC는 소수 가능.
 _POLICY_PATTERN = re.compile(
@@ -47,11 +50,12 @@ QDLIN_LEN = 1000
 
 
 def correct_summary_spikes(summary: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """초기 100사이클 summary의 단발 스파이크를 앞뒤 중앙값으로 바꾼다.
+    """`qd_max_minus_2` 전처리. [설계 2장] [D07] [D10]
 
-    단발 조건: 바로 앞 사이클과 바로 뒤 사이클이 있고, 그 둘의 차이가
-    `SPIKE_RULES`의 허용치 이하이며, 가운데 값만 최소 이탈을 넘는다.
-    두 사이클 연속 스파이크는 앞뒤가 서로 멀어 바꾸지 않는다.
+    초기 100사이클만 사용. cycle_life나 EOL 이후 정보는 쓰지 않는다. [D03]
+    단발 스파이크만 앞뒤 중앙값으로 바꾼다. 앞뒤 허용 차이는 DAY 1 코드값
+    (IR 0.001Ω, 온도 2°C, chargetime 1)을 유지한다.
+    두 사이클 연속 스파이크는 앞뒤가 서로 멀어 바꾸지 않는다. pkl은 수정하지 않는다.
     """
     corrected = summary.copy()
     logs: list[dict] = []
@@ -91,14 +95,23 @@ def correct_summary_spikes(summary: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
 
 
 def delta_q(qdlin: np.ndarray) -> np.ndarray:
-    """사이클 100 Qdlin에서 사이클 10 Qdlin을 뺀다. 행 99와 행 9."""
+    """피처명 `log10(var(ΔQ))`의 ΔQ. [설계 2장] [설계 4장] [D08] [D09]
+
+    ΔQ = Qdlin[행 99] − Qdlin[행 9] (사이클 100 − 10).
+    초기 100사이클만 사용. cycle_life로 피처를 만들지 않는다. [D03]
+    """
     if qdlin.shape != (100, QDLIN_LEN):
         raise ValueError(f"Qdlin shape는 (100, 1000)이어야 한다. 받음: {qdlin.shape}")
     return np.asarray(qdlin[CYCLE_100_ROW] - qdlin[CYCLE_10_ROW], dtype=float)
 
 
 def delta_q_features(dq: np.ndarray, vdlin: np.ndarray) -> dict[str, float]:
-    """ΔQ(V) 요약 통계. 분산·최솟값은 log10 절댓값 버전도 둔다."""
+    """피처명 `log10(var(ΔQ))`. [설계 4장] [D09] [D40]
+
+    1,000점 분산은 `np.var(ddof=1)` 뒤 log10. 이 피처의 전처리는 없다.
+    초기 100사이클만 사용. [D03]
+    `log10_abs_min`, 2V, skew, kurtosis는 계산만 하고 모델 입력에서 뺀다. [D12] [D13]
+    """
     voltage_index = int(np.argmin(np.abs(np.asarray(vdlin, dtype=float) - 2.0)))
     variance = float(np.var(dq, ddof=1))
     minimum = float(np.min(dq))
@@ -200,10 +213,11 @@ def _value_at_cycle(block: pd.DataFrame, cycle: int, column: str) -> float:
 
 
 def summary_features(summary: pd.DataFrame) -> pd.DataFrame:
-    """초기 100사이클 summary에서 셀 단위 용량·온도·저항 피처를 만든다.
+    """피처명 `qd_max_minus_2`. [설계 4장] [D10] [D40]
 
-    summary는 스파이크 보정 후를 넘긴다. 온도 적분은 사이클 간격이 1이라
-    사이클 2~100의 합과 같다.
+    스파이크 보정 후 사이클 2~100 QD 최댓값 − 사이클 2 QD.
+    초기 100사이클만 사용. cycle_life로 피처를 만들지 않는다. [D03]
+    기울기·절편·사이클 2 QD·온도·IR은 계산만 하고 모델 입력에서 뺀다. [D14] [D18]
     """
     rows = []
     for cell_id, block in summary.groupby("cell_id", sort=False):
@@ -237,25 +251,17 @@ def summary_features(summary: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
-# 메인 후보. skew는 Q3에서 제외로 확정했지만 순위표에는 남긴다.
-MODEL_FEATURES = (
-    "log10_var",
-    "log10_abs_min",
-    "dq_kurtosis",
-    "dq_at_2v",
-    "slope_2_100",
-    "intercept_2_100",
-    "slope_91_100",
-    "intercept_91_100",
-    "qd_cycle2",
-    "qd_max_minus_2",
-    "tmax_integral",
-    "tavg_integral",
-    "ir_min",
-    "ir_diff_100_2",
-    "dq_skew",
-)
-# Q4에서 메인 모델 제외로 확정. 순위표에는 비교용으로만 둔다.
+# 모델 입력은 두 열만. [설계 4장] [D34] [D41]
+# 아래는 계산 함수에 남기고 모델 입력에서만 뺀다.
+# log10_abs_min: var와 r=0.996, 잔차 0.036, VIF 689·711 [D12]
+# dq_at_2v, dq_skew, dq_kurtosis: 2V는 var와 겹치고 skew는 Batch 3에서 부호 반전 [D13]
+# slope·intercept·qd_cycle2: 절편과 사이클 2 QD는 r=0.999, 기울기 부호는 Batch 2에서 반전 [D14]
+# knee: 수명 78% 지점이라 누수. 피처 함수 없음 [D15]
+# c1, soc_pct, c2, c_avg, early_ct: 테스트 배치에서 상관이 사라짐 [D16]
+# log10_var_norm, 배치 번호: 깊이 비 1.30→1.29, 배치 효과는 Batch 1만으로 추정 불가 [D17]
+# tmax_integral, tavg_integral, ir_min, ir_diff_100_2: 추가 신호가 아님 [D18]
+MODEL_FEATURES = ("log10_var", "qd_max_minus_2")
+# 비교용 계산만. 메인 모델 입력 아님. [D16]
 COMPARE_FEATURES = ("c1", "soc_pct", "c2", "c_avg", "early_ct")
 
 
@@ -286,30 +292,30 @@ def normalized_delta_q(dq: np.ndarray, qd_cycle10: float) -> np.ndarray:
     return np.asarray(dq, dtype=float) / qd_cycle10
 
 
-def build_feature_table(
-    cells: pd.DataFrame,
-    summary: pd.DataFrame,
-    qdlin_by_cell: dict[str, np.ndarray],
-    vdlin: np.ndarray,
-) -> pd.DataFrame:
-    """셀 1행 피처 표. summary 단발 스파이크는 여기서 보정한다.
+def build_feature_table(batch: int) -> pd.DataFrame:
+    """배치 하나의 모델 입력 표. 피처명 `log10(var(ΔQ))`, `qd_max_minus_2`. [설계 4장] [D02] [D34] [D40] [D41]
 
-    넘긴 summary는 초기 100사이클을 포함해야 한다. pkl 원본은 바꾸지 않는다.
+    1행 = 1셀, `use=True`만. 초기 100사이클만 사용. [D03] [D04]
+    열은 cell_id, batch, policy_readable, cycle_life, log10_var, qd_max_minus_2.
+    정규화 ΔQ 등 배제 피처 열은 넣지 않는다. [D17]
+    pkl 원본은 바꾸지 않는다.
     """
-    corrected, _ = correct_summary_spikes(summary)
-    base = build_delta_q_table(cells, qdlin_by_cell, vdlin)
-    summary_part = summary_features(corrected)
-    parsed = parse_policies(base["policy_readable"])
-    base = pd.concat([base.reset_index(drop=True), parsed.reset_index(drop=True)], axis=1)
-    base = base.join(summary_part, on="cell_id")
-    norm_vars = []
-    for record in base.itertuples(index=False):
-        dq = delta_q(qdlin_by_cell[record.cell_id])
-        normalized = normalized_delta_q(dq, record.qd_cycle10)
-        variance = float(np.nanvar(normalized, ddof=1))
-        norm_vars.append(float(np.log10(variance)) if variance > 0 else np.nan)
-    base["log10_var_norm"] = norm_vars
-    return base
+    path = DATA_PROCESSED_DIR / f"batch{int(batch)}.pkl"
+    with path.open("rb") as handle:
+        payload = pickle.load(handle)
+    cells = payload["cells"]
+    cells = cells.loc[cells["use"]].reset_index(drop=True)
+    cell_ids = set(cells["cell_id"])
+    summary = payload["summary"]
+    summary = summary.loc[
+        summary["cell_id"].isin(cell_ids) & summary["cycle"].between(1, 100)
+    ].copy()
+    corrected, _logs = correct_summary_spikes(summary)
+    base = build_delta_q_table(cells, payload["qdlin"], payload["vdlin"])
+    extra = summary_features(corrected)[["qd_max_minus_2"]]
+    base = base.join(extra, on="cell_id")
+    columns = ["cell_id", "batch", "policy_readable", "cycle_life", "log10_var", "qd_max_minus_2"]
+    return base[columns].reset_index(drop=True)
 
 
 def build_delta_q_table(
